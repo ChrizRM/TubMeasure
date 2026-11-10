@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Lets a run be started by hand from the Actions tab.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The measurement engine is pure Swift, so its tests run on a Linux runner.
+  test-core:
+    runs-on: ubuntu-latest
+    container: swift:6.0-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit-test the measurement engine
+        run: swift test
+
+  # The app itself needs Xcode, which only macOS runners have.
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the iOS app
+        run: |
+          xcodebuild build \
+            -project TubMeasure.xcodeproj \
+            -target TubMeasure \
+            -configuration Debug \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO
