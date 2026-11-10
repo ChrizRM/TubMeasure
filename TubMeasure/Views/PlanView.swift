@@ -22,14 +22,27 @@ struct PlanView: View {
     private func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
         let engine = MeasurementEngine(room: room)
         let bounds = room.planBounds
-        let pad = 48.0
-        let w = max(bounds.max.x - bounds.min.x, 0.1)
-        let h = max(bounds.max.y - bounds.min.y, 0.1)
-        let scale = max(min((Double(size.width) - 2 * pad) / w, (Double(size.height) - 2 * pad) / h), 1)
+        // Side margins leave room for the wall labels, which sit outside the walls.
+        let padX = 92.0, padY = 40.0
+        let roomW = max(bounds.max.x - bounds.min.x, 0.1)
+        let roomH = max(bounds.max.y - bounds.min.y, 0.1)
+        // Turn the plan a quarter turn when that lets it fill the space (a long room on a tall screen).
+        let rotate = (roomW > roomH) != (size.width > size.height)
+        let w = rotate ? roomH : roomW
+        let h = rotate ? roomW : roomH
+        let scale = max(min((Double(size.width) - 2 * padX) / w, (Double(size.height) - 2 * padY) / h), 1)
         let ox = (Double(size.width) - w * scale) / 2
         let oy = (Double(size.height) - h * scale) / 2
+        /// Room plan coordinates to drawing coordinates, before scaling.
+        func local(_ v: Vec2) -> Vec2 {
+            let u = v.x - bounds.min.x, t = v.y - bounds.min.y
+            return rotate ? Vec2(roomH - t, u) : Vec2(u, t)
+        }
+        /// A direction on the room plan, turned the same way as `local`.
+        func turn(_ d: Vec2) -> Vec2 { rotate ? Vec2(-d.y, d.x) : d }
         func pt(_ v: Vec2) -> CGPoint {
-            CGPoint(x: ox + (v.x - bounds.min.x) * scale, y: oy + (v.y - bounds.min.y) * scale)
+            let l = local(v)
+            return CGPoint(x: ox + l.x * scale, y: oy + l.y * scale)
         }
         func line(_ a: Vec2, _ b: Vec2) -> Path {
             var p = Path()
@@ -48,12 +61,22 @@ struct PlanView: View {
             ctx.fill(polygon(floor), with: .color(.gray.opacity(0.08)))
         }
 
+        // A sink standing in a cabinet is labelled once, as a vanity.
+        let cabinets = room.objects.filter { $0.category == .storage }
+        func isVanitySink(_ o: RoomObject) -> Bool {
+            o.category == .sink && cabinets.contains { $0.box.contains(plan: o.box.center.plan, margin: 0.3) }
+        }
+        func isVanityCabinet(_ o: RoomObject) -> Bool {
+            o.category == .storage && room.objects.contains { isVanitySink($0) && o.box.contains(plan: $0.box.center.plan, margin: 0.3) }
+        }
         for o in room.objects {
             let colour = Theme.color(o.category)
             let path = polygon(o.box.footprint)
             ctx.fill(path, with: .color(colour.opacity(0.22)))
             ctx.stroke(path, with: .color(colour), lineWidth: 1.5)
-            ctx.draw(Text(o.category.displayName).font(.caption2).foregroundColor(colour), at: pt(o.box.center.plan))
+            if isVanitySink(o) { continue }
+            let name = isVanityCabinet(o) ? "Vanity" : o.category.displayName
+            ctx.draw(Text(name).font(.caption2).foregroundColor(colour), at: pt(o.box.center.plan))
         }
 
         for wall in engine.walls {
@@ -81,11 +104,14 @@ struct PlanView: View {
             let mid = wall.box.center.plan
             var out = wall.box.axisZ
             if out.dot(mid - centre) < 0 { out = out * -1 }
+            out = turn(out)
             let p = pt(mid)
-            let at = CGPoint(x: Double(p.x) + out.x * 24, y: Double(p.y) + out.y * 24)
+            let at = CGPoint(x: Double(p.x) + out.x * 12, y: Double(p.y) + out.y * 16)
             let text = Text("\(engine.label(wall))").font(.caption.bold())
                 + Text("  \(MeasureFormat.length(wall.box.size.x, units))").font(.caption2)
-            ctx.draw(text.foregroundColor(.secondary), at: at)
+            // Side-wall labels grow outward from the wall instead of straddling it.
+            let anchor: UnitPoint = out.x > 0.5 ? .leading : out.x < -0.5 ? .trailing : .center
+            ctx.draw(text.foregroundColor(.secondary), at: at, anchor: anchor)
         }
 
         for m in room.marks where m.kind.isInRoom {
