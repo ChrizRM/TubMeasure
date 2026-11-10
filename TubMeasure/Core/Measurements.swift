@@ -218,6 +218,76 @@ struct MeasurementEngine {
 
     private func marks(_ kind: MarkKind) -> [MarkedPoint] { room.marks.filter { $0.kind == kind } }
 
+    /// Distances between consecutive pairs of marks of one kind (1st–2nd, 3rd–4th, …).
+    func pairDistances(_ kind: MarkKind) -> [Double] {
+        let pts = marks(kind)
+        return stride(from: 0, to: pts.count - 1, by: 2).map { pts[$0].position.distance(to: pts[$0 + 1].position) }
+    }
+
+    /// Unit vector on the plan pointing from the tub out into the room (its open long side).
+    func tubFront(_ tub: RoomObject) -> Vec2 {
+        let shortAxis = tub.box.size.x < tub.box.size.z ? tub.box.axisX : tub.box.axisZ
+        let half = min(tub.box.size.x, tub.box.size.z) / 2
+        let c = tub.box.center.plan
+        func wallGap(_ dir: Vec2) -> Double {
+            nearestWall(to: c + dir * half)?.distance ?? .infinity
+        }
+        return wallGap(shortAxis) >= wallGap(shortAxis * -1) ? shortAxis : shortAxis * -1
+    }
+
+    /// "Left", "Right" or "Center": where the marked drain is, standing in front of the tub facing it.
+    func drainSide() -> String? {
+        guard let drain = marks(.drain).first?.position.plan,
+              let tub = room.objects.filter({ $0.category == .bathtub })
+                .min(by: { $0.box.planDistance(to: drain) < $1.box.planDistance(to: drain) }),
+              tub.box.planDistance(to: drain) < 0.5 else { return nil }
+        // Facing direction is into the tub. On this plan (x = world X, y = world Z, Y up),
+        // the viewer's right is (-facing.y, facing.x).
+        let facing = tubFront(tub) * -1
+        let right = Vec2(-facing.y, facing.x)
+        let offset = (drain - tub.box.center.plan).dot(right)
+        let length = max(tub.box.size.x, tub.box.size.z)
+        if abs(offset) < length * 0.15 { return "Center" }
+        return offset > 0 ? "Right" : "Left"
+    }
+
+    /// The toilet's drain (flange) centre: midway between the marked bolts, or estimated
+    /// as a standard 12 in rough-in out from the wall behind the toilet.
+    func toiletDrainCentre() -> (point: Vec2, estimated: Bool)? {
+        let bolts = marks(.flangeBolt).map { $0.position.plan }
+        if bolts.count >= 2 { return ((bolts[0] + bolts[1]) * 0.5, false) }
+        if let b = bolts.first { return (b, false) }
+        guard let t = room.objects.first(where: { $0.category == .toilet }) else { return nil }
+        let depthAxis = t.box.size.x > t.box.size.z ? t.box.axisX : t.box.axisZ
+        let depth = max(t.box.size.x, t.box.size.z)
+        let c = t.box.center.plan
+        let endA = c + depthAxis * (depth / 2), endB = c - depthAxis * (depth / 2)
+        let gapA = nearestWall(to: endA)?.distance ?? .infinity
+        let gapB = nearestWall(to: endB)?.distance ?? .infinity
+        let back = gapA <= gapB ? endA : endB
+        let inward = (c - back).normalized
+        return (back + inward * min(12 * MeasureFormat.metresPerInch, depth), true)
+    }
+
+    /// Horizontal distance from the toilet drain centre to the outside edge of the tub, or to the marked shower edge.
+    func toiletDrainToTubEdge() -> (distance: Double, estimated: Bool)? {
+        guard let drain = toiletDrainCentre() else { return nil }
+        var best: Double?
+        for tub in room.objects where tub.category == .bathtub {
+            let d = tub.box.planDistance(to: drain.point)
+            best = min(best ?? d, d)
+        }
+        let edge = marks(.tubEdge).map { $0.position.plan }
+        if edge.count == 1 {
+            best = min(best ?? .infinity, drain.point.distance(to: edge[0]))
+        }
+        for k in stride(from: 0, to: max(edge.count - 1, 0), by: 1) {
+            let d = Geometry.distance(point: drain.point, segmentA: edge[k], segmentB: edge[k + 1])
+            best = min(best ?? d, d)
+        }
+        return best.map { ($0, drain.estimated) }
+    }
+
     private func numbered(_ base: String, _ index: Int, of count: Int) -> String {
         count > 1 ? "\(base) \(index + 1)" : base
     }
@@ -254,6 +324,17 @@ struct MeasurementEngine {
         for (i, m) in seats.enumerated() {
             out.append(Measurement(group: .toilet, title: numbered("Seat height (marked)", i, of: seats.count),
                                    value: .length(m.position.y - floorY)))
+        }
+
+        if let t = toiletDrainToTubEdge() {
+            out.append(Measurement(group: .toilet, title: "Toilet drain centre → outside edge of tub/shower", value: .length(t.distance),
+                                   note: t.estimated ? "Estimated from the toilet's shape; mark the flange bolts for an accurate figure." : nil))
+        }
+        let shelves = marks(.shelfBottom)
+        for (i, m) in shelves.enumerated() {
+            let h = m.position.y - floorY
+            out.append(Measurement(group: .toilet, title: numbered("Shelf/counter above toilet: floor to bottom", i, of: shelves.count),
+                                   value: .length(h), note: h < 34 * MeasureFormat.metresPerInch ? "Below the 34 in minimum." : nil))
         }
 
         let bolts = marks(.flangeBolt)
@@ -320,6 +401,13 @@ struct MeasurementEngine {
             out.append(Measurement(group: .tub, title: "\(name) length", value: .length(max(t.box.size.x, t.box.size.z))))
             out.append(Measurement(group: .tub, title: "\(name) width", value: .length(min(t.box.size.x, t.box.size.z))))
             out.append(Measurement(group: .tub, title: "\(name) rim height", value: .length(t.box.topY - floorY)))
+        }
+
+        for m in marks(.tileTop).prefix(1) {
+            out.append(Measurement(group: .tub, title: "Top of tile/surround above floor", value: .length(m.position.y - floorY)))
+        }
+        if let side = drainSide() {
+            out.append(Measurement(group: .tub, title: "Drain location (standing in front of the tub)", value: .text(side)))
         }
 
         let edgePts = marks(.tubEdge).map { $0.position.plan }
@@ -463,6 +551,17 @@ struct MeasurementEngine {
         }
         for (i, d) in doors.enumerated() { describe(numbered("Door", i, of: doors.count), d) }
         for (i, o) in openings.enumerated() { describe(numbered("Opening", i, of: openings.count), o) }
+        let halls = pairDistances(.hallway)
+        for (i, w) in halls.enumerated() {
+            out.append(Measurement(group: .doors, title: numbered("Hallway width (marked)", i, of: halls.count), value: .length(w)))
+        }
+        for (i, w) in pairDistances(.extraDoor).enumerated() {
+            out.append(Measurement(group: .doors, title: "Other door #\(i + 1) width (marked)", value: .length(w)))
+        }
+        if marks(.hallway).count % 2 == 1 || marks(.extraDoor).count % 2 == 1 {
+            out.append(Measurement(group: .doors, title: "Unpaired width mark", value: .text("Mark the other side"),
+                                   note: "Hallway and door widths need two marks each."))
+        }
         return out
     }
 

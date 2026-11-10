@@ -52,9 +52,12 @@ struct RoomObject: Codable, Identifiable, Hashable {
 
 /// A point the user marks by hand in AR, for things the scanner cannot recognise.
 enum MarkKind: String, Codable, CaseIterable, Identifiable {
-    case drain, flangeBolt, tubEdge, toiletSeat, custom
+    case drain, flangeBolt, tubEdge, toiletSeat, shelfBottom, tileTop, hallway, extraDoor, custom
 
     var id: String { rawValue }
+
+    /// Hallway and other-door widths are measured outside the bathroom, so they are left off the drawings.
+    var isInRoom: Bool { self != .hallway && self != .extraDoor }
 
     var displayName: String {
         switch self {
@@ -62,6 +65,10 @@ enum MarkKind: String, Codable, CaseIterable, Identifiable {
         case .flangeBolt: return "Flange bolt"
         case .tubEdge: return "Tub/shower edge"
         case .toiletSeat: return "Toilet seat rim"
+        case .shelfBottom: return "Shelf over toilet"
+        case .tileTop: return "Top of tile"
+        case .hallway: return "Hallway width"
+        case .extraDoor: return "Other door width"
         case .custom: return "Custom point"
         }
     }
@@ -69,13 +76,21 @@ enum MarkKind: String, Codable, CaseIterable, Identifiable {
     var instruction: String {
         switch self {
         case .drain:
-            return "Aim the crosshair at the centre of the drain and tap Mark."
+            return "Aim the crosshair at the centre of the tub drain and tap Mark."
         case .flangeBolt:
             return "Mark the two closet bolts (bolt caps) at the base of the toilet, one on each side."
         case .tubEdge:
             return "Mark points along the tub or shower edge / curb, in order. Two or more points make an edge line."
         case .toiletSeat:
             return "Aim at the top of the toilet seat rim to record seat height."
+        case .shelfBottom:
+            return "Aim at the underside of the shelf or counter above the toilet."
+        case .tileTop:
+            return "Aim at the top edge of the tile or surround around the tub."
+        case .hallway:
+            return "Walk into the hallway. Mark one wall, then the opposite wall, at the narrowest point."
+        case .extraDoor:
+            return "For each other door being removed, mark one side of the opening and then the other (jamb to jamb)."
         case .custom:
             return "Mark any point. Consecutive custom points are measured like a tape."
         }
@@ -138,7 +153,7 @@ struct RoomModel: Codable, Identifiable, Hashable {
     var objects: [RoomObject] = []
     var marks: [MarkedPoint] = []
     var items: [DetectedItem] = []
-    var photoFileNames: [String] = []
+    var survey = Survey()
     var hasUSDZ = false
 
     var walls: [Surface] { surfaces.filter { $0.kind == .wall } }
@@ -181,7 +196,7 @@ struct RoomModel: Codable, Identifiable, Hashable {
     var planBounds: (min: Vec2, max: Vec2) {
         var pts = surfaces.filter { $0.kind != .floor }.flatMap { [$0.start, $0.end] }
         pts += objects.flatMap { $0.box.footprint }
-        pts += marks.map { $0.position.plan }
+        pts += marks.filter(\.kind.isInRoom).map { $0.position.plan }
         guard let first = pts.first else { return (Vec2.zero, Vec2(1, 1)) }
         var lo = first, hi = first
         for p in pts {

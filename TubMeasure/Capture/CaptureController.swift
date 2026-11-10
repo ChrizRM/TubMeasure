@@ -21,19 +21,24 @@ final class CaptureController: NSObject, ObservableObject {
     @Published private(set) var photoCount = 0
     @Published private(set) var liveItems: [DetectedItem] = []
     @Published var markError: String?
+    /// Confirmation shown briefly after a photo is filed into the checklist.
+    @Published private(set) var lastPhotoTitle: String?
+    /// Units used when stamping measurements onto snapshots.
+    var units: UnitSystem = .imperial
 
     /// Hosts the RoomPlan view while scanning and the AR view while marking.
     let containerView = UIView()
 
     static var isSupported: Bool { RoomCaptureSession.isSupported }
-    static let maxPhotos = 12
 
     private let arSession = ARSession()
     private var roomCaptureView: RoomCaptureView?
     private var sceneView: ARSCNView?
     private var markNodes: [SCNNode] = []
     private var capturedRoom: CapturedRoom?
-    private var photos: [Data] = []
+    /// The scan converted to the app's model (in AR world coordinates), once processed.
+    private var scannedModel: RoomModel?
+    private var photos: [(photoID: String, data: Data)] = []
     private let detector = ItemDetector()
     private let ciContext = CIContext()
     private var sampleTimer: Timer?
@@ -85,6 +90,7 @@ final class CaptureController: NSObject, ObservableObject {
             let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
             guard !cancelled else { return }
             capturedRoom = room
+            scannedModel = CapturedRoomConverter.convert(room, name: "")
             enterMarking()
         } catch {
             phase = .failed("The scan could not be processed: \(error.localizedDescription)")
@@ -168,13 +174,32 @@ final class CaptureController: NSObject, ObservableObject {
 
     // MARK: - Photos and item detection
 
-    func takePhoto() {
-        guard photos.count < Self.maxPhotos, let frame = arSession.currentFrame else { return }
-        let image = CIImage(cvPixelBuffer: frame.capturedImage).oriented(.right)
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let data = ciContext.jpegRepresentation(of: image, colorSpace: space) else { return }
-        photos.append(data)
+    /// Takes a photo and files it under a checklist item. While marking points, the photo is a
+    /// snapshot of the AR view (with the marked dots) stamped with the matching measurements.
+    func takePhoto(for photoID: String) {
+        var image: UIImage?
+        if phase == .marking, let view = sceneView {
+            image = view.snapshot()
+        } else if let frame = arSession.currentFrame {
+            let ci = CIImage(cvPixelBuffer: frame.capturedImage).oriented(.right)
+            if let cg = ciContext.createCGImage(ci, from: ci.extent) { image = UIImage(cgImage: cg) }
+        }
+        guard var photo = image else { return }
+        if phase == .marking {
+            var model = scannedModel ?? RoomModel(name: "")
+            model.marks = marks
+            photo = PhotoFiles.stamp(photo, lines: SurveyAutoFill.captions(forPhoto: photoID, room: model, units: units))
+        }
+        guard let data = PhotoFiles.jpeg(photo) else { return }
+        photos.append((photoID, data))
         photoCount = photos.count
+
+        let title = SurveyForm.photos.first { $0.id == photoID }?.title ?? "photos"
+        lastPhotoTitle = "Saved to: \(title)"
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            if self?.lastPhotoTitle == "Saved to: \(title)" { self?.lastPhotoTitle = nil }
+        }
     }
 
     private func sampleFrame() {
@@ -186,22 +211,25 @@ final class CaptureController: NSObject, ObservableObject {
 
     // MARK: - Result
 
-    /// Builds the final model, writes photos and the USDZ next to it, and stops the session.
-    func finish(name: String) -> RoomModel {
-        var model = capturedRoom.map { CapturedRoomConverter.convert($0, name: name) } ?? RoomModel(name: name)
+    /// Puts the scan into an existing job, keeping its name, typed answers and earlier photos.
+    /// Re-scanning replaces the room geometry and marked points.
+    func finish(into job: RoomModel) -> RoomModel {
+        var model = scannedModel ?? RoomModel(name: job.name)
+        model.id = job.id
+        model.name = job.name
+        model.date = job.date
+        model.survey = job.survey
         model.marks = marks
         model.items = ItemAggregator.merge(camera: detector.items(), objects: model.objects)
         model = model.normalized()
 
-        let folder = ScanStore.folder(for: model.id)
-        for (i, data) in photos.enumerated() {
-            let file = "photo-\(i + 1).jpg"
-            if (try? data.write(to: folder.appendingPathComponent(file))) != nil {
-                model.photoFileNames.append(file)
+        for p in photos {
+            if let file = PhotoFiles.write(p.data, jobID: model.id, photoID: p.photoID) {
+                model.survey.photos[p.photoID, default: []].append(SurveyPhoto(fileName: file))
             }
         }
         if let room = capturedRoom {
-            let url = folder.appendingPathComponent(ScanStore.usdzFile)
+            let url = ScanStore.folder(for: model.id).appendingPathComponent(ScanStore.usdzFile)
             try? FileManager.default.removeItem(at: url)
             model.hasUSDZ = (try? room.export(to: url, exportOptions: .parametric)) != nil
         }

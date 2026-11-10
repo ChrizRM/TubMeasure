@@ -176,24 +176,6 @@ struct ItemsView: View {
                 }
             }
 
-            if !room.photoFileNames.isEmpty {
-                Section("Reference photos") {
-                    ScrollView(.horizontal) {
-                        HStack {
-                            ForEach(room.photoFileNames, id: \.self) { file in
-                                let url = ScanStore.folder(for: room.id).appendingPathComponent(file)
-                                if let image = UIImage(contentsOfFile: url.path) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(height: 180)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 

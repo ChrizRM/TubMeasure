@@ -60,7 +60,7 @@ struct Scene3DView: View {
         for o in room.objects {
             root.addChildNode(boxNode(o.box, minDepth: 0.005, colour: Theme.color(o.category), opacity: 0.9))
         }
-        for m in room.marks {
+        for m in room.marks where m.kind.isInRoom {
             let sphere = SCNSphere(radius: 0.03)
             sphere.firstMaterial?.diffuse.contents = UIColor(Theme.color(m.kind))
             sphere.firstMaterial?.lightingModel = .constant

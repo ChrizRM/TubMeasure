@@ -1,50 +1,48 @@
 import SwiftUI
 
+enum Route: Hashable {
+    case job(UUID)
+    case scan(UUID)
+    case form(UUID)
+    case photos(UUID)
+    case photo(UUID, String)
+}
+
 struct HomeView: View {
     @EnvironmentObject private var store: ScanStore
-    @State private var path: [UUID] = []
-    @State private var scanning = false
+    @State private var path: [Route] = []
+    @State private var creating = false
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
                 Section {
                     Button {
-                        scanning = true
+                        creating = true
                     } label: {
-                        Label("Scan a bathroom", systemImage: "camera.viewfinder")
+                        Label("New job", systemImage: "plus.circle.fill")
                             .font(.headline)
-                    }
-                    .disabled(!CaptureController.isSupported)
-
-                    if !CaptureController.isSupported {
-                        Text("Scanning needs a LiDAR device (iPhone 12 Pro or later Pro models, or iPad Pro). You can still explore the demo room.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
                     }
                     Button {
                         var demo = RoomModel.sample()
                         demo.date = Date()
                         store.save(demo)
-                        path = [demo.id]
+                        path = [.job(demo.id)]
                     } label: {
-                        Label("Open a demo room", systemImage: "cube.transparent")
+                        Label("Open a demo job", systemImage: "cube.transparent")
                     }
+                } footer: {
+                    Text("A job holds the bathroom scan, the measurement form and the photo checklist for one customer.")
                 }
 
-                Section("Saved scans") {
+                Section("Jobs") {
                     if store.rooms.isEmpty {
-                        Text("No scans yet.")
+                        Text("No jobs yet.")
                             .foregroundStyle(.secondary)
                     }
                     ForEach(store.rooms) { room in
-                        NavigationLink(value: room.id) {
-                            VStack(alignment: .leading) {
-                                Text(room.name)
-                                Text(room.date.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                        NavigationLink(value: Route.job(room.id)) {
+                            JobRow(room: room)
                         }
                     }
                     .onDelete { offsets in
@@ -53,13 +51,78 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("TubMeasure")
-            .navigationDestination(for: UUID.self) { id in
-                ResultView(roomID: id)
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .job(let id): JobView(roomID: id)
+                case .scan(let id): ResultView(roomID: id)
+                case .form(let id): FormView(roomID: id)
+                case .photos(let id): PhotoChecklistView(roomID: id)
+                case .photo(let id, let item): PhotoItemView(roomID: id, itemID: item)
+                }
             }
         }
-        .fullScreenCover(isPresented: $scanning) {
-            ScanView { id in
-                path = [id]
+        .sheet(isPresented: $creating) {
+            NewJobSheet { room in
+                store.save(room)
+                path = [.job(room.id)]
+            }
+        }
+    }
+}
+
+private struct JobRow: View {
+    let room: RoomModel
+
+    var body: some View {
+        let r = SurveyResolver(room: room)
+        let form = r.formProgress, photos = r.photoProgress
+        VStack(alignment: .leading, spacing: 2) {
+            Text(room.name)
+            if !room.survey.info.address.isEmpty {
+                Text(room.survey.info.address)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(room.date.formatted(date: .abbreviated, time: .omitted)) · form \(form.done)/\(form.total) · photos \(photos.done)/\(photos.total)\(room.walls.isEmpty ? " · not scanned" : "")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct NewJobSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var info = JobInfo()
+    var onCreate: (RoomModel) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Customer name", text: $info.customerName)
+                        .textContentType(.name)
+                    TextField("Address", text: $info.address, axis: .vertical)
+                        .textContentType(.fullStreetAddress)
+                    TextField("Prospect # (optional)", text: $info.prospectNumber)
+                } footer: {
+                    Text("Kept only on this phone. It appears on the PDFs you share.")
+                }
+            }
+            .navigationTitle("New job")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        let name = info.customerName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        var room = RoomModel(name: name.isEmpty ? "Job " + Date().formatted(date: .abbreviated, time: .shortened) : name)
+                        room.survey.info = info
+                        onCreate(room)
+                        dismiss()
+                    }
+                }
             }
         }
     }

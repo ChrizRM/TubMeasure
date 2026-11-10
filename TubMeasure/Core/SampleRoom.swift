@@ -34,6 +34,13 @@ extension RoomModel {
             MarkedPoint(kind: .flangeBolt, position: Vec3(0.3048, 0.02, 1.25 + 0.0762)),
             MarkedPoint(kind: .toiletSeat, position: Vec3(0.45, 0.42, 1.25)),
             MarkedPoint(kind: .drain, position: Vec3(0.25, 0.05, l - 0.381)),
+            MarkedPoint(kind: .shelfBottom, position: Vec3(0.15, 50 * 0.0254, 1.25)),
+            MarkedPoint(kind: .tileTop, position: Vec3(0.75, 75 * 0.0254, l)),
+            // Hallway outside the door, 32 in wide, and one more door to remove, 28 in wide.
+            MarkedPoint(kind: .hallway, position: Vec3(0.2, 1.0, -0.5)),
+            MarkedPoint(kind: .hallway, position: Vec3(0.2 + 32 * 0.0254, 1.0, -0.5)),
+            MarkedPoint(kind: .extraDoor, position: Vec3(2.5, 1.0, -1.0)),
+            MarkedPoint(kind: .extraDoor, position: Vec3(2.5 + 28 * 0.0254, 1.0, -1.0)),
         ]
         let items = [
             DetectedItem(category: .carpet, source: .camera, confidence: 0.62, sightings: 9),

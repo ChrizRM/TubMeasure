@@ -6,8 +6,10 @@ struct ScanView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var controller = CaptureController()
     @State private var markKind: MarkKind = .drain
+    @AppStorage("units") private var units: UnitSystem = .imperial
 
-    var onSaved: (UUID) -> Void
+    /// The job this scan belongs to.
+    let jobID: UUID
 
     var body: some View {
         ZStack {
@@ -34,7 +36,10 @@ struct ScanView: View {
             }
             .padding()
         }
-        .onAppear { controller.start() }
+        .onAppear {
+            controller.units = units
+            controller.start()
+        }
         .statusBarHidden()
     }
 
@@ -47,7 +52,14 @@ struct ScanView: View {
             .buttonStyle(.borderedProminent)
             .tint(.black.opacity(0.55))
             Spacer()
-            if !controller.liveItems.isEmpty {
+            if let saved = controller.lastPhotoTitle {
+                Text(saved)
+                    .font(.footnote.weight(.semibold))
+                    .lineLimit(2)
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .background(.green.opacity(0.8), in: Capsule())
+            } else if !controller.liveItems.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(controller.liveItems) { item in
                         Image(systemName: Theme.symbol(item.category))
@@ -62,21 +74,30 @@ struct ScanView: View {
         }
     }
 
+    /// Takes a photo straight into the photo checklist. While marking, it is an AR snapshot
+    /// stamped with the measurements that photo needs.
     private var photoButton: some View {
-        Button {
-            controller.takePhoto()
+        Menu {
+            Section(controller.phase == .marking ? "Snapshot with measurements, save to:" : "Save photo to:") {
+                ForEach(SurveyForm.photos) { item in
+                    Button(item.title) {
+                        controller.takePhoto(for: item.id)
+                    }
+                }
+            }
         } label: {
             Label("\(controller.photoCount)", systemImage: "camera.fill")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(.white)
+                .background(.black.opacity(0.55), in: Capsule())
         }
-        .buttonStyle(.borderedProminent)
-        .tint(.black.opacity(0.55))
-        .disabled(controller.photoCount >= CaptureController.maxPhotos)
-        .accessibilityLabel("Take reference photo")
+        .accessibilityLabel("Take a checklist photo")
     }
 
     private var scanningControls: some View {
         VStack(spacing: 10) {
-            Text("Walk slowly around the room. Sweep every wall from floor to ceiling, and get the toilet, tub, vanity, window and door fully in view.")
+            Text("Walk slowly around the room. Sweep every wall from floor to ceiling, and get the toilet, tub, vanity, window and door fully in view. Use the camera button for checklist photos as you go.")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
                 .padding(10)
@@ -175,11 +196,13 @@ struct ScanView: View {
     }
 
     private func save() {
-        let name = "Bathroom " + Date().formatted(date: .abbreviated, time: .shortened)
-        let room = controller.finish(name: name)
-        store.save(room)
+        guard let job = store.room(jobID) else {
+            controller.cancel()
+            dismiss()
+            return
+        }
+        store.save(controller.finish(into: job))
         dismiss()
-        onSaved(room.id)
     }
 }
 

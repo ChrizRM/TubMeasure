@@ -106,7 +106,7 @@ struct IsoView: View {
         }
 
         // Marked points
-        for m in room.marks {
+        for m in room.marks where m.kind.isInRoom {
             let p = pt(m.position)
             let r: CGFloat = 5
             let dot = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))

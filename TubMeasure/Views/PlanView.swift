@@ -88,7 +88,7 @@ struct PlanView: View {
             ctx.draw(text.foregroundColor(.secondary), at: at)
         }
 
-        for m in room.marks {
+        for m in room.marks where m.kind.isInRoom {
             let p = pt(m.position.plan)
             let r: CGFloat = 6
             let dot = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))

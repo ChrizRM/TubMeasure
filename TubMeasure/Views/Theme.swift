@@ -18,6 +18,10 @@ enum Theme {
         case .flangeBolt: return .orange
         case .tubEdge: return .green
         case .toiletSeat: return .pink
+        case .shelfBottom: return .mint
+        case .tileTop: return .cyan
+        case .hallway: return .indigo
+        case .extraDoor: return .purple
         case .custom: return .yellow
         }
     }
@@ -37,6 +41,10 @@ enum Theme {
         case .flangeBolt: return "B"
         case .tubEdge: return "E"
         case .toiletSeat: return "S"
+        case .shelfBottom: return "H"
+        case .tileTop: return "T"
+        case .hallway: return "W"
+        case .extraDoor: return "O"
         case .custom: return "P"
         }
     }
@@ -58,7 +66,7 @@ struct MarkLegend: View {
     let room: RoomModel
 
     var body: some View {
-        let kinds = MarkKind.allCases.filter { k in room.marks.contains { $0.kind == k } }
+        let kinds = MarkKind.allCases.filter { k in k.isInRoom && room.marks.contains { $0.kind == k } }
         if !kinds.isEmpty {
             HStack(spacing: 12) {
                 ForEach(kinds) { kind in

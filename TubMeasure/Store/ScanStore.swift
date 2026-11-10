@@ -6,18 +6,18 @@ final class ScanStore: ObservableObject {
     @Published private(set) var rooms: [RoomModel] = []
 
     private static let roomFile = "room.json"
-    static let usdzFile = "room.usdz"
+    nonisolated static let usdzFile = "room.usdz"
 
     init() {
         load()
     }
 
-    private static var root: URL {
+    nonisolated private static var root: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Scans", isDirectory: true)
     }
 
     /// The folder holding one scan's files; created on demand.
-    static func folder(for id: UUID) -> URL {
+    nonisolated static func folder(for id: UUID) -> URL {
         let url = root.appendingPathComponent(id.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
@@ -41,6 +41,13 @@ final class ScanStore: ObservableObject {
         } catch {
             print("TubMeasure: could not save scan: \(error)")
         }
+    }
+
+    /// Applies a change to a saved job and writes it to disk.
+    func update(_ id: UUID, _ change: (inout RoomModel) -> Void) {
+        guard var room = room(id) else { return }
+        change(&room)
+        save(room)
     }
 
     func delete(_ id: UUID) {
